@@ -1,4 +1,6 @@
-use crate::biomenoise::{BiomeNoise, NetherNoise, EndNoise, initBiomeNoise};
+use crate::biomenoise::{BiomeNoise, NetherNoise, EndNoise, initBiomeNoise, setBiomeSeed};
+use crate::biomes::{Dimension};
+use crate::layers::{getVoronoiSHA};
 
 enum GeneratorFlag {
     LARGE_BIOMES, //            = 0x1,
@@ -7,7 +9,7 @@ enum GeneratorFlag {
 }
 
 impl GeneratorFlag {
-    fn value(&self) -> i32 {
+    fn value(&self) -> u32 {
         match *self {
             GeneratorFlag::LARGE_BIOMES => 1,
             GeneratorFlag::NO_BETA_OCEAN => 2,
@@ -29,12 +31,32 @@ struct Generator {
 
 pub fn setupGenerator(mut g: Generator, mc: i32, flags: u32) {
     g.mc = mc;
-    g.dim = DIM_UNDEF; // TODO: Créer DIM_UNDEF 
+    g.dim = Dimension::DIM_UNDEF.value(); // TODO: Créer DIM_UNDEF 
     g.flags = flags;
     g.seed = 0;
     g.sha = 0;
 
     initBiomeNoise(&mut g.bn, mc);
+
+}
+
+pub fn applySeed(mut g: Generator, dim: i32, seed: u64) {
+    g.dim = dim;
+    g.seed = seed;
+    g.sha = 0;
+
+    if dim == Dimension::DIM_OVERWORLD.value() {
+        setBiomeSeed(&g.bn, seed, (g.flags & GeneratorFlag::LARGE_BIOMES.value()) as i32);
+    }
+    // else if dim == Dimension::DIM_NETHER.value() {
+    //     setNetherSeed(&g.nn, seed);
+    // }
+    // else if dim == Dimension::DIM_END.value() {
+    //     setEndSeed(&g.en, g.mc, seed);   
+    // }
+
+    g.sha = getVoronoiSHA(seed);
+    
 
 }
 

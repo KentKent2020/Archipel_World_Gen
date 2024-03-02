@@ -1,5 +1,5 @@
-use crate::noise::{DoublePerlinNoise, PerlinNoise};
-use crate::rng::{lerp};
+use crate::noise::{DoublePerlinNoise, PerlinNoise, xDoublePerlinInit};
+use crate::rng::{lerp, Xoroshiro, xSetSeed, xNextLong};
 pub struct Range {
     scale: i32,
     x: i32,
@@ -32,6 +32,18 @@ pub struct Spline {
 pub struct FixSpline {
     len: i32,
     val: f32,
+}
+
+impl FixSpline {
+    pub fn ToSpline(&mut self) -> Spline {
+        Spline {
+            len: self.len,
+            typ: 0, 
+            loc: [0.0; 12], 
+            der: [0.0; 12],
+            val: [std::ptr::null_mut(); 12],
+        }
+    }
 }
 
 pub struct SplineStack {
@@ -117,10 +129,10 @@ pub fn initBiomeNoise(bn: &mut BiomeNoise, mc: i32) {
     ss.len += 1;
     sp.typ = SplineParameter::SP_CONTINENTALNESS.value(); 
 
-    let sp1: Spline = createLandSpline(ss, -0.15, 0.00, 0.0, 0.1, 0.00, -0.03, 0); 
-    let sp2: Spline = createLandSpline(ss, -0.10, 0.03, 0.1, 0.1, 0.01, -0.03, 0);
-    let sp3: Spline = createLandSpline(ss, -0.10, 0.03, 0.1, 0.7, 0.01, -0.03, 1);
-    let sp4: Spline = createLandSpline(ss, -0.05, 0.03, 0.1, 1.0, 0.01, 0.01, 1);
+    let sp1: Spline = createLandSpline(&mut ss, -0.15, 0.00, 0.0, 0.1, 0.00, -0.03, 0); 
+    let sp2: Spline = createLandSpline(&mut ss, -0.10, 0.03, 0.1, 0.1, 0.01, -0.03, 0);
+    let sp3: Spline = createLandSpline(&mut ss, -0.10, 0.03, 0.1, 0.7, 0.01, -0.03, 1);
+    let sp4: Spline = createLandSpline(&mut ss, -0.05, 0.03, 0.1, 1.0, 0.01,  0.01,  1);
 
     addSplineVal(&mut sp, -1.10, &createFixSpline(&mut ss, 0.044), 0.0);
     addSplineVal(&mut sp, -1.02, &createFixSpline(&mut ss, -0.2222), 0.0);
@@ -150,18 +162,123 @@ pub fn createFixSpline(ss: &mut SplineStack, val: f32) -> &mut Spline {
     ss.flen += 1;
     sp.len = 1;
     sp.val = val;
-    sp as &mut Spline // Convertir la référence de FixSpline en Spline et la retourner
+    sp as &mut Spline //FIXME: HOW CAN A TRANSFORM THIS FIXSPLINE IN SPLINE!!!!!!!
 }
 
 
-pub fn createSpline_38219(ss: SplineStack, f: f32, bl: i32) -> Spline {
-    let sp:Spline = ss.stack[ss.len];
-    // ss.len += 1; // TODO: ???
-    sp.typ = SplineParameter::SP_RIDGES;
+
+
+
+pub fn init_climate_seed(dpn: &mut DoublePerlinNoise, oct: PerlinNoise, xlo: u64, xhi: u64, large: bool, nptype: i32, nmax: i32) -> i32 { // Thx ChatGpt
+    let mut pxr = Xoroshiro { lo: 0, hi: 0 };
+    let mut n = 0;
+
+    match nptype {
+        NP_SHIFT => {
+            static AMP: [f64; 4] = [1.0, 1.0, 1.0, 0.0];
+            // md5 "minecraft:offset"
+            pxr.lo = xlo ^ 0x080518cf6af25384;
+            pxr.hi = xhi ^ 0x3f3dfb40a54febd5;
+            n += xDoublePerlinInit(dpn, &mut pxr, &mut [oct], &AMP, -3, 4, nmax);
+        }
+        NP_TEMPERATURE => {
+            static AMP: [f64; 6] = [1.5, 0.0, 1.0, 0.0, 0.0, 0.0];
+            // md5 "minecraft:temperature" or "minecraft:temperature_large"
+            pxr.lo = xlo ^ if large { 0x944b0073edf549db } else { 0x5c7e6b29735f0d7f };
+            pxr.hi = xhi ^ if large { 0x4ff44347e9d22b96 } else { 0xf7d86f1bbc734988 };
+            n += xDoublePerlinInit(dpn, &mut pxr, &mut [oct], &AMP, if large { -12 } else { -10 }, 6, nmax);
+        }
+        NP_HUMIDITY => {
+            static AMP: [f64; 6] = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+            // md5 "minecraft:vegetation" or "minecraft:vegetation_large"
+            pxr.lo = xlo ^ if large { 0x71b8ab943dbd5301 } else { 0x81bb4d22e8dc168e };
+            pxr.hi = xhi ^ if large { 0xbb63ddcf39ff7a2b } else { 0xf1c8b4bea16303cd };
+            n += xDoublePerlinInit(dpn, &mut pxr, &mut [oct], &AMP, if large { -10 } else { -8 }, 6, nmax);
+        }
+        NP_CONTINENTALNESS => {
+            static AMP: [f64; 9] = [1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0];
+            // md5 "minecraft:continentalness" or "minecraft:continentalness_large"
+            pxr.lo = xlo ^ if large { 0x9a3f51a113fce8dc } else { 0x83886c9d0ae3a662 };
+            pxr.hi = xhi ^ if large { 0xee2dbd157e5dcdad } else { 0xafa638a61b42e8ad };
+            n += xDoublePerlinInit(dpn, &mut pxr, &mut [oct], &AMP, if large { -11 } else { -9 }, 9, nmax);
+        }
+        NP_EROSION => {
+            static AMP: [f64; 5] = [1.0, 1.0, 0.0, 1.0, 1.0];
+            // md5 "minecraft:erosion" or "minecraft:erosion_large"
+            pxr.lo = xlo ^ if large { 0x8c984b1f8702a951 } else { 0xd02491e6058f6fd8 };
+            pxr.hi = xhi ^ if large { 0xead7b1f92bae535f } else { 0x4792512c94c17a80 };
+            n += xDoublePerlinInit(dpn, &mut pxr, &mut [oct], &AMP, if large { -11 } else { -9 }, 5, nmax);
+        }
+        NP_WEIRDNESS => {
+            static AMP: [f64; 6] = [1.0, 2.0, 1.0, 0.0, 0.0, 0.0];
+            // md5 "minecraft:ridge"
+            pxr.lo = xlo ^ 0xefc8ef4d36102b34;
+            pxr.hi = xhi ^ 0x1beeeb324a0f24ea;
+            n += xDoublePerlinInit(dpn, &mut pxr, &mut [oct], &AMP, -7, 6, nmax);
+        }
+        _ => {
+            println!("unsupported climate parameter {}", nptype);
+            std::process::exit(1);
+        }
+    }
+    n
+}
+
+
+
+pub fn setBiomeSeed(bn: &BiomeNoise, seed: u64, large: i32) {
+    let mut pxr: Xoroshiro;
+    xSetSeed(&mut pxr, seed);
+    let xlo: u64 = xNextLong(&mut pxr);
+    let xhi: u64 = xNextLong(&mut pxr);
+
+    let mut n: i32 = 0;
+    let mut i: i32 = 0;
+
+    loop {
+        n += init_climate_seed(&mut bn.climate[i as usize], bn.oct[n as usize], xlo, xhi, if large != 0 {false} else {true}, i, -1);
+        if i < NP_MAX as i32 {
+            break;
+        }
+        i += 1;
+    }
+
+    if n > bn.oct.len() as i32 {
+        println!("setBiomeSeed(): BiomeNoise is malformed, buffer too small");
+        std::process::exit(1);
+    }
+
+    bn.nptype = -1;
+}
+
+
+pub fn getOffsetValue(weirdness: f32, continentalness: f32) -> f32 {
+    let f0:  f32 = 1.0 - (1.0 - continentalness) * 0.5;
+    let f1:  f32 = 0.5 * (1.0 - continentalness);
+    let f2:  f32 = (weirdness + 1.17) * 0.46082947;
+    let off: f32 = f2 * f0 - f1;
+    if (weirdness < -0.7) {
+        if off > -0.2222 {
+            off
+        } else {
+            -0.2222
+        }
+    } else {
+        if off > 0.0 {
+            off
+        } else {
+            0.0
+        }
+    }
+}
+
+pub fn createSpline_38219(ss: &mut SplineStack, f: f32, bl: i32) -> Spline {
+    let mut sp: Spline = ss.stack[ss.len as usize];
+    sp.typ = SplineParameter::SP_RIDGES.value();
 
     let i: f32 = getOffsetValue(-1.0, f);
     let k: f32 = getOffsetValue( 1.0, f);
-    let l: f32 = 1.0 - (1.0 - f) * 0.5;
+    let mut l: f32 = 1.0 - (1.0 - f) * 0.5;
     let u: f32 = 0.5 * (1.0 - f);
     l = u / (0.46082947 * l) - 1.17;
     if -0.65 < l && l < 1.0 {
@@ -172,117 +289,80 @@ pub fn createSpline_38219(ss: SplineStack, f: f32, bl: i32) -> Spline {
     
         let u = getOffsetValue(-0.65, f);
         
-        addSplineVal(sp, -1.0, createFixSpline(ss, i), q);
-        addSplineVal(sp, -0.75, createFixSpline(ss, p), 0.0);
-        addSplineVal(sp, -0.65, createFixSpline(ss, u), 0.0);
-        addSplineVal(sp, l - 0.01, createFixSpline(ss, r), 0.0);
-        addSplineVal(sp, l, createFixSpline(ss, r), s);
-        addSplineVal(sp, 1.0, createFixSpline(ss, k), s);
+        addSplineVal(&mut sp, -1.0, createFixSpline(ss, i), q);
+        addSplineVal(&mut sp, -0.75, createFixSpline(ss, p), 0.0);
+        addSplineVal(&mut sp, -0.65, createFixSpline(ss, u), 0.0);
+        addSplineVal(&mut sp, l - 0.01, createFixSpline(ss, r), 0.0);
+        addSplineVal(&mut sp, l, createFixSpline(ss, r), s);
+        addSplineVal(&mut sp, 1.0, createFixSpline(ss, k), s);
     } else {
         let u = (k - i) * 0.5;
-        if bl {
-            addSplineVal(sp, -1.0, createFixSpline(ss, if i > 0.2 { i } else { 0.2 }), 0.0);
-            addSplineVal(sp, 0.0, createFixSpline(ss, lerp(0.5, i, k)), u);
+        if bl != 0 {
+            addSplineVal(&mut sp, -1.0, createFixSpline(ss, if i > 0.2 { i } else { 0.2 }), 0.0);
+            addSplineVal(&mut sp, 0.0, createFixSpline(ss, lerp(0.5, i as f64, k as f64) as f32), u); // TODO: Check if the f32 do not cause error
         } else {
-            addSplineVal(sp, -1.0, createFixSpline(ss, i), u);
+            addSplineVal(&mut sp, -1.0, createFixSpline(ss, i), u);
         }
-        addSplineVal(sp, 1.0, createFixSpline(ss, k), u);
+        addSplineVal(&mut sp, 1.0, createFixSpline(ss, k), u);
     }
     return sp;
 }
 
-pub fn createFlatOffsetSpline(ss: SplineStack, f: f32, g: f32, h: f32, i: f32, j: f32, k: f32) -> Spline{
-    let sp: Spline = ss.stack[ss.len];
-    // ss.len += 1; // TODO: ???
-    sp.typ = SplineParameter::SP_RIDGES;
+pub fn createFlatOffsetSpline(ss: &mut SplineStack, f: f32, g: f32, h: f32, i: f32, j: f32, k: f32) -> Spline{
+    let mut sp: Spline = ss.stack[ss.len as usize];
 
-    let l: f32 = 0.5 * (g - f); 
+    sp.typ = SplineParameter::SP_RIDGES.value();
+
+    let mut l: f32 = 0.5 * (g - f); 
     if l < k {l=k};
     let m = 5.0 * (h-g);
 
-    add_spline_val(sp, -1.0, create_fix_spline(ss, f), l);
-    addSplineVal(sp, -0.4, createFixSpline(ss, g), if l < m { l } else { m });
-    addSplineVal(sp, 0.0,  createFixSpline(ss, h), m);
-    addSplineVal(sp, 0.4,  createFixSpline(ss, i), 2.0 * (i - h));
-    addSplineVal(sp, 1.0,  createFixSpline(ss, j), 0.7 * (j - i));
+    addSplineVal(&mut sp, -1.0, createFixSpline(ss, f), l);
+    addSplineVal(&mut sp, -0.4, createFixSpline(ss, g), if l < m { l } else { m });
+    addSplineVal(&mut sp, 0.0,  createFixSpline(ss, h), m);
+    addSplineVal(&mut sp, 0.4,  createFixSpline(ss, i), 2.0 * (i - h));
+    addSplineVal(&mut sp, 1.0,  createFixSpline(ss, j), 0.7 * (j - i));
 
     return sp;
 
 }
 
-pub fn createLandSpline(ss: SplineStack, f: f32, g: f32, h: f32, i: f32, j: f32, k: f32, bl: i32) -> Spline{
-    let sp1: Spline = createSpline_38219(ss, lerp(i, 0.6, 1.5), bl);
-    let sp2: Spline = createSpline_38219(ss, lerp(i, 0.6, 1.0), bl);
+pub fn createLandSpline(ss: &mut SplineStack, f: f32, g: f32, h: f32, i: f32, j: f32, k: f32, bl: i32) -> Spline{
+    let sp1: Spline = createSpline_38219(ss, lerp(i as f64, 0.6, 1.5) as f32, bl); // TODO: Check if the f32 do not cause error
+    let sp2: Spline = createSpline_38219(ss, lerp(i as f64, 0.6, 1.0) as f32, bl); // TODO: Check if the f32 do not cause error
     let sp3: Spline = createSpline_38219(ss, i, bl);
-    const ih:f32 = 0.5 * i;
+    let ih: f32 = 0.5 * i;
     let sp4: Spline = createFlatOffsetSpline(ss, f-0.15, ih, ih, ih, i*0.6, 0.5);
     let sp5: Spline = createFlatOffsetSpline(ss, f, j*i, g*i, ih, i*0.6, 0.5);
     let sp6: Spline = createFlatOffsetSpline(ss, f, j, j, g, h, 0.5);
     let sp7: Spline= createFlatOffsetSpline(ss, f, j, j, g, h, 0.5);
 
-    let sp8: Spline = ss.stack[ss.len];
-    // ss.len += 1; //TODO: ???
+    let mut sp8: Spline = ss.stack[ss.len as usize];
 
-    sp8.typ = SplineParameter::SP_RIDGES; 
-    addSplineVal(sp8, -1.0, createFixSpline(ss, f), 0.0);
-    addSplineVal(sp8, -0.4, sp6, 0.0);
-    addSplineVal(sp8, 0.0, createFixSpline(ss, h + 0.07), 0.0);
+
+    sp8.typ = SplineParameter::SP_RIDGES.value(); 
+    addSplineVal(&mut sp8, -1.0, createFixSpline(ss, f), 0.0);
+    addSplineVal(&mut sp8, -0.4, &sp6, 0.0);
+    addSplineVal(&mut sp8, 0.0, createFixSpline(ss, h + 0.07), 0.0);
 
     let sp9: Spline = createFlatOffsetSpline(ss, -0.02, k, k, g, h, 0.0);
-    let sp: Spline = ss.stack[ss.len];
-    // ss.len += 1; // TODO: ???
-    sp.typ = SplineParameter::SP_EROSION;
-    addSplineVal(sp, -0.85, sp1, 0.0);
-    addSplineVal(sp, -0.7,  sp2, 0.0);
-    addSplineVal(sp, -0.4,  sp3, 0.0);
-    addSplineVal(sp, -0.35, sp4, 0.0);
-    addSplineVal(sp, -0.1,  sp5, 0.0);
-    addSplineVal(sp,  0.2,  sp6, 0.0);
+    let mut sp: Spline = ss.stack[ss.len as usize];
 
-    if bl {
-        addSplineVal(sp, 0.4,  sp7, 0.0);
-        addSplineVal(sp, 0.45, sp8, 0.0);
-        addSplineVal(sp, 0.55, sp8, 0.0);
-        addSplineVal(sp, 0.58, sp7, 0.0);
+    sp.typ = SplineParameter::SP_EROSION.value();
+    addSplineVal(&mut sp, -0.85, &sp1, 0.0);
+    addSplineVal(&mut sp, -0.7,  &sp2, 0.0);
+    addSplineVal(&mut sp, -0.4,  &sp3, 0.0);
+    addSplineVal(&mut sp, -0.35, &sp4, 0.0);
+    addSplineVal(&mut sp, -0.1,  &sp5, 0.0);
+    addSplineVal(&mut sp,  0.2,  &sp6, 0.0);
+
+    if bl != 0 {
+        addSplineVal(&mut sp, 0.4,  &sp7, 0.0);
+        addSplineVal(&mut sp, 0.45, &sp8, 0.0);
+        addSplineVal(&mut sp, 0.55, &sp8, 0.0);
+        addSplineVal(&mut sp, 0.58, &sp7, 0.0);
     }
-    addSplineVal(sp, 0.7, sp9, 0.0);
+    addSplineVal(&mut sp, 0.7, &sp9, 0.0);
     return sp;
     
 }   
-
-// static Spline *createLandSpline(
-//     SplineStack *ss, float f, float g, float h, float i, float j, float k, int bl)
-// {
-//     Spline *sp1 = createSpline_38219(ss, lerp(i, 0.6F, 1.5F), bl);
-//     Spline *sp2 = createSpline_38219(ss, lerp(i, 0.6F, 1.0F), bl);
-//     Spline *sp3 = createSpline_38219(ss, i, bl);
-//     const float ih = 0.5F * i;
-//     Spline *sp4 = createFlatOffsetSpline(ss, f-0.15F, ih, ih, ih, i*0.6F, 0.5F);
-//     Spline *sp5 = createFlatOffsetSpline(ss, f, j*i, g*i, ih, i*0.6F, 0.5F);
-//     Spline *sp6 = createFlatOffsetSpline(ss, f, j, j, g, h, 0.5F);
-//     Spline *sp7 = createFlatOffsetSpline(ss, f, j, j, g, h, 0.5F);
-
-//     Spline *sp8 = &ss->stack[ss->len++];
-//     sp8->typ = SP_RIDGES;
-//     addSplineVal(sp8, -1.0F, createFixSpline(ss, f), 0.0F);
-//     addSplineVal(sp8, -0.4F, sp6, 0.0F);
-//     addSplineVal(sp8,  0.0F, createFixSpline(ss, h + 0.07F), 0.0F);
-
-//     Spline *sp9 = createFlatOffsetSpline(ss, -0.02F, k, k, g, h, 0.0F);
-//     Spline *sp = &ss->stack[ss->len++];
-//     sp->typ = SP_EROSION;
-//     addSplineVal(sp, -0.85F, sp1, 0.0F);
-//     addSplineVal(sp, -0.7F,  sp2, 0.0F);
-//     addSplineVal(sp, -0.4F,  sp3, 0.0F);
-//     addSplineVal(sp, -0.35F, sp4, 0.0F);
-//     addSplineVal(sp, -0.1F,  sp5, 0.0F);
-//     addSplineVal(sp,  0.2F,  sp6, 0.0F);
-//     if (bl) {
-//         addSplineVal(sp, 0.4F,  sp7, 0.0F);
-//         addSplineVal(sp, 0.45F, sp8, 0.0F);
-//         addSplineVal(sp, 0.55F, sp8, 0.0F);
-//         addSplineVal(sp, 0.58F, sp7, 0.0F);
-//     }
-//     addSplineVal(sp, 0.7F, sp9, 0.0F);
-//     return sp;
-// }
